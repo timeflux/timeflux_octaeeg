@@ -1,8 +1,7 @@
-An example Timeflux plugin
-==========================
+OctaEEG driver for Timeflux
+===========================
 
-This is an example plugin that provides a few simple demonstration nodes. Use it as a template
-to develop your own plugins.
+This plugin provides a driver to connect to the OctaEEG board
 
 Installation
 ------------
@@ -14,4 +13,4 @@ You can then install this plugin in the `timeflux` environment:
 ::
 
     $ conda activate timeflux
-    $ pip install timeflux_example
+    $ pip install git+https://github.com/timeflux/timeflux_octaeeg.git
