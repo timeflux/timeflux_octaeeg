@@ -5,7 +5,7 @@ graphs:
         module: timeflux_octaeeg.nodes.driver
         class: OctaEEG
         params:
-          rate: 1000
+          rate: 250
           gain: 1
           names: [PO7, O1, Oz, O2, PO8, PO3, POz, PO4]
       - id: Display

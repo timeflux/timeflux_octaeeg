@@ -10,7 +10,8 @@ from timeflux.helpers.clock import now
 from threading import Thread, Lock
 
 
-RATES = { 250: 0x96, 500: 0x95, 1000: 0x94, 2000: 0x93, 4000: 0x92, 8000: 0x91, 16000: 0x90 }
+# RATES = { 250: 0x96, 500: 0x95, 1000: 0x94, 2000: 0x93, 4000: 0x92, 8000: 0x91, 16000: 0x90 }
+RATES = { 250: 0x96, 500: 0x95, 1000: 0x94, 2000: 0x93, 4000: 0x92, 8000: 0x91 } # Limited to 8 kSPS for now
 GAINS = { 1: 0x00, 2: 0x10, 4:0x20, 6: 0x30, 8: 0x40, 12: 0x50, 24: 0x60 }
 CHANNELS = 8
 
@@ -26,7 +27,7 @@ class OctaEEG(Node):
            :language: yaml
     """
 
-    def __init__(self, rate=250, gain=1, names=None):
+    def __init__(self, rate=250, gain=1, names=None, debug=False):
 
         # Validate input
         if rate not in RATES:
@@ -40,11 +41,16 @@ class OctaEEG(Node):
         self.rate = rate
         self.gain = gain
 
+        # Debug mode
+        self.debug = debug
+
         # Set channel names
         if isinstance(names, list) and len(names) == CHANNELS:
             self.names = names
         else:
             self.names = list(range(1, CHANNELS + 1))
+        if self.debug:
+            self.names = ["TIMESTAMP", "COUNTER"] + self.names
 
         # Connect
         self._ws = websocket.WebSocket()
@@ -54,22 +60,13 @@ class OctaEEG(Node):
         except:
             raise WorkerInterrupt("Could not connect to device")
 
-        # Initialize
+        # Initialize the ADS1299
         # See: https://www.ti.com/lit/ds/symlink/ads1299.pdf
         self._ws.send_text(json.dumps({"command":"sdatac", "parameters":[]}))
-        #self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x01, 0b10010100]}))
         self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x01, RATES[rate]]}))
         self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x02, 0xC0]}))
         self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x03, 0xEC]}))
-        self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x15, 0b00100000]}))
-        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x05, 0x00]}))
-        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x06, 0x00]}))
-        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x07, 0x00]}))
-        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x08, 0x00]}))
-        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x09, 0x00]}))
-        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x0A, 0x00]}))
-        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x0B, 0x00]}))
-        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x0C, 0x00]}))
+        self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x15, 0x20]}))
         self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x05, GAINS[gain]]}))
         self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x06, GAINS[gain]]}))
         self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x07, GAINS[gain]]}))
@@ -120,16 +117,17 @@ class OctaEEG(Node):
         timestamps = []
         rows = []
         if data and (type(data) is list or type(data) is bytes):
+            # TODO: check impedance
+            # TODO: check for missing or out of order packets
             for block_index in range(0, len(data), block_size):
                 block = data[block_index:block_index + block_size]
                 timestamp = int.from_bytes(block[0:4], byteorder='little')
                 counter = int.from_bytes(block[4:8], byteorder='little')
-                row = []
+                row = [timestamp, counter] if self.debug else []
                 for channel in range(0, CHANNELS):
-                    # TODO: check impedance
                     channel_offset = 8 + (channel * 3)
                     sample = int.from_bytes(block[channel_offset:channel_offset + 3], byteorder="big", signed=True)
-                    sample *= (1e6 * ((4.5 / 8388607) / self.gain)) # TODO
+                    sample *= (1e6 * ((4.5 / 8388607) / self.gain)) # raw value to uV
                     row.append(sample)
                 rows.append(row)
                 timestamps.append(timestamp)

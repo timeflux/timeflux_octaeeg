@@ -9,6 +9,7 @@ graphs:
         rate: 1000
         gain: 1
         names: [PO7, O1, Oz, O2, PO8, PO3, POz, PO4]
+        debug: false # Set to `true` if you want to record the internal timestamp and sample counter
     - id: publish
       module: timeflux.nodes.zmq
       class: Pub
@@ -26,17 +27,19 @@ graphs:
       class: Sub
       params:
         topics: [ eeg ]
-    - id: decimate
+    - id: notch
       module: timeflux_dsp.nodes.filters
-      class: DropRows
+      class: IIRFilter
       params:
-        factor: 16 # Downsample to 250 Hz
+        filter_type: bandstop
+        order: 3
+        frequencies: [48, 52]
     - id: bandpass
       module: timeflux_dsp.nodes.filters
       class: IIRFilter
       params:
         order: 3
-        frequencies: [1, 40]
+        frequencies: [1, 25]
     - id: ui
       module: timeflux_ui.nodes.ui
       class: UI
@@ -45,6 +48,10 @@ graphs:
       class: Display
     edges:
       - source: subscribe:eeg
+        target: notch
+      - source: notch
+        target: bandpass
+      - source: bandpass
         target: ui:eeg
       - source: subscribe:eeg
         target: debug
