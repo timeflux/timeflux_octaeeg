@@ -1,6 +1,7 @@
 """OctaEEG Driver"""
 
 import websocket
+import json
 import socket
 import numpy as np
 from timeflux.core.node import Node
@@ -9,25 +10,13 @@ from timeflux.helpers.clock import now
 from threading import Thread, Lock
 
 
-RATES = { 250: 0x06, 500: 0x05, 1000: 0x04, 2000: 0x03, 4000: 0x02, 8000: 0x01, 16000: 0x00 }
-GAINS = { 1: 0xC0, 2: 0xC1, 4:0xC2, 6: 0xC3, 8: 0xC4, 12: 0xC5, 24: 0xC6 }
+RATES = { 250: 0x96, 500: 0x95, 1000: 0x94, 2000: 0x93, 4000: 0x92, 8000: 0x91, 16000: 0x90 }
+GAINS = { 1: 0x00, 2: 0x10, 4:0x20, 6: 0x30, 8: 0x40, 12: 0x50, 24: 0x60 }
 CHANNELS = 8
 
 class OctaEEG(Node):
 
     """OctaEEG Driver.
-
-    Args:
-        port (string): The serial port.
-            e.g. ``COM3`` on Windows;  ``/dev/cu.usbmodem14601`` on MacOS;
-            ``/dev/ttyUSB0`` on GNU/Linux.
-        rate (int): The device rate in Hz.
-            Allowed values: ``250``, ``500``, ``1024``, ``2048``, ``4096``, ``8192``,
-            ``16384``. Default: ``250``.
-        gain (int): The amplifier gain.
-            Allowed values: ``1``, ``2``, ``4``, ``6``, ``8``, ``12``, ``24``.
-            Default: ``24``.
-        names (int): The number of channels to enable. Default: ``8``.
 
     Attributes:
         o (Port): Default output, provides DataFrame.
@@ -65,12 +54,32 @@ class OctaEEG(Node):
         except:
             raise WorkerInterrupt("Could not connect to device")
 
-        # Set sampling rate and gain
-        self._set_sampling_rate(rate)
-        self._set_gain(gain)
-
-        # Compute time offset
-        # TODO
+        # Initialize
+        # See: https://www.ti.com/lit/ds/symlink/ads1299.pdf
+        self._ws.send_text(json.dumps({"command":"sdatac", "parameters":[]}))
+        #self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x01, 0b10010100]}))
+        self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x01, RATES[rate]]}))
+        self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x02, 0xC0]}))
+        self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x03, 0xEC]}))
+        self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x15, 0b00100000]}))
+        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x05, 0x00]}))
+        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x06, 0x00]}))
+        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x07, 0x00]}))
+        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x08, 0x00]}))
+        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x09, 0x00]}))
+        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x0A, 0x00]}))
+        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x0B, 0x00]}))
+        # self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x0C, 0x00]}))
+        self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x05, GAINS[gain]]}))
+        self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x06, GAINS[gain]]}))
+        self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x07, GAINS[gain]]}))
+        self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x08, GAINS[gain]]}))
+        self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x09, GAINS[gain]]}))
+        self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x0A, GAINS[gain]]}))
+        self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x0B, GAINS[gain]]}))
+        self._ws.send_text(json.dumps({"command":"wreg", "parameters":[0x0C, GAINS[gain]]}))
+        self._ws.send_text(json.dumps({"command":"status", "parameters":[]}))
+        self._ws.send_text(json.dumps({"command":"rdatac", "parameters":[]}))
 
         # Set meta
         self.meta = { "rate": rate }
@@ -82,22 +91,6 @@ class OctaEEG(Node):
         self._thread = Thread(target=self._loop).start()
 
 
-    def _set_sampling_rate(self, rate, fps=1):
-        """Set sampling rate."""
-        # TODO: configure FPS
-        if rate in RATES:
-            byte = RATES[rate] << 1
-            command = 0x80 | byte | fps
-            self._ws.send_binary(command.to_bytes(1, byteorder="big"))
-
-
-    def _set_gain(self, gain):
-        """Set gain."""
-        # TODO: set gain per channel
-        if gain in GAINS:
-            self._ws.send_binary(GAINS[gain].to_bytes(1, byteorder="big"))
-
-
     def _reset(self):
         """Empty cache."""
         self._rows = []
@@ -106,41 +99,41 @@ class OctaEEG(Node):
 
     def _loop(self):
         """Acquire and cache data."""
-        delta = np.timedelta64(np.int64(1e9 / self.rate), "ns")
+        delta = None
         while self._running:
-            #try:
-            timestamp, data = self._read()
-            timestamps = [timestamp]
-            for i in range(len(data) - 1):
-                timestamps.append(timestamps[-1] - delta)
-            timestamps.reverse()
+            timestamps, data = self._read()
+            if timestamps:
+                if delta == None:
+                    delta = now() - np.datetime64(timestamps[-1], "us")
+                timestamps = [np.datetime64(timestamp, "us") + delta for timestamp in timestamps]
             if data:
                 self._lock.acquire()
-                self._timestamps += timestamps
                 self._rows += data
+                self._timestamps += timestamps
                 self._lock.release()
-            # except:
-            #     pass
 
 
     def _read(self):
         """Receive packets from the device."""
         data = self._ws.recv()
-        timestamp = now() # TODO: adjust for latency
         block_size = 32
+        timestamps = []
         rows = []
-        for block_index in range(0, len(data), block_size):
-            block = data[block_index:block_index + block_size]
-            counter = block[0] # TODO: check for packet loss
-            row = []
-            for channel in range(0, CHANNELS):
-                # TODO: check impedance
-                channel_offset = 1 + (channel * 3)
-                sample = int.from_bytes(block[channel_offset:channel_offset + 3], byteorder="big", signed=True)
-                sample *= (1e6 * ((4.5 / 8388607) / self.gain))
-                row.append(sample)
-            rows.append(row)
-        return timestamp, rows
+        if data and (type(data) is list or type(data) is bytes):
+            for block_index in range(0, len(data), block_size):
+                block = data[block_index:block_index + block_size]
+                timestamp = int.from_bytes(block[0:4], byteorder='little')
+                counter = int.from_bytes(block[4:8], byteorder='little')
+                row = []
+                for channel in range(0, CHANNELS):
+                    # TODO: check impedance
+                    channel_offset = 8 + (channel * 3)
+                    sample = int.from_bytes(block[channel_offset:channel_offset + 3], byteorder="big", signed=True)
+                    sample *= (1e6 * ((4.5 / 8388607) / self.gain)) # TODO
+                    row.append(sample)
+                rows.append(row)
+                timestamps.append(timestamp)
+        return timestamps, rows
 
 
     def update(self):
