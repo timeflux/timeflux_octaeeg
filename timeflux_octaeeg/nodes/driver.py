@@ -119,6 +119,7 @@ class OctaEEG(Node):
         if data and (type(data) is list or type(data) is bytes):
             # TODO: check impedance
             # TODO: check for missing or out of order packets
+            # TODO: handle timestamp overflow after 71 minutes
             for block_index in range(0, len(data), block_size):
                 block = data[block_index:block_index + block_size]
                 timestamp = int.from_bytes(block[0:4], byteorder='little')
