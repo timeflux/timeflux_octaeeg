@@ -19,6 +19,16 @@ class OctaEEG(Node):
 
     """OctaEEG Driver.
 
+    Args:
+        rate (int): The device rate in Hz.
+            Allowed values: `250`, `500`, `1000`, `2000`, `4000`, `8000`.
+            Default: `250`.
+        gain (int): The amplifier gain.
+            Allowed values: `1`, `2`, `4`, `6`, `8`, `12`, `24`.
+            Default: `24`.
+        names (list): The list of channels names. Default: `None`.
+        debug (bool): If `True`, add the internal timestamp and counter. Default: `False`.
+
     Attributes:
         o (Port): Default output, provides DataFrame.
 
@@ -27,7 +37,7 @@ class OctaEEG(Node):
            :language: yaml
     """
 
-    def __init__(self, rate=250, gain=1, names=None, debug=False):
+    def __init__(self, rate=250, gain=24, names=None, debug=False):
 
         # Validate input
         if rate not in RATES:
@@ -96,13 +106,10 @@ class OctaEEG(Node):
 
     def _loop(self):
         """Acquire and cache data."""
-        delta = None
+        self.delta = None
+        self.last = 0
         while self._running:
             timestamps, data = self._read()
-            if timestamps:
-                if delta == None:
-                    delta = now() - np.datetime64(timestamps[-1], "us")
-                timestamps = [np.datetime64(timestamp, "us") + delta for timestamp in timestamps]
             if data:
                 self._lock.acquire()
                 self._rows += data
@@ -119,19 +126,22 @@ class OctaEEG(Node):
         if data and (type(data) is list or type(data) is bytes):
             # TODO: check impedance
             # TODO: check for missing or out of order packets
-            # TODO: handle timestamp overflow after 71 minutes
             for block_index in range(0, len(data), block_size):
                 block = data[block_index:block_index + block_size]
-                timestamp = int.from_bytes(block[0:4], byteorder='little')
-                counter = int.from_bytes(block[4:8], byteorder='little')
+                timestamp = int.from_bytes(block[0:4], byteorder="little")
+                counter = int.from_bytes(block[4:8], byteorder="little")
                 row = [timestamp, counter] if self.debug else []
+                if self.delta == None or self.last >= timestamp:
+                    # Make sure that the signal is not drifting and that we handle timestamp overflow properly
+                    self.delta = now() - np.datetime64(timestamp, "us")
+                self.last = timestamp
                 for channel in range(0, CHANNELS):
                     channel_offset = 8 + (channel * 3)
                     sample = int.from_bytes(block[channel_offset:channel_offset + 3], byteorder="big", signed=True)
                     sample *= (1e6 * ((4.5 / 8388607) / self.gain)) # raw value to uV
                     row.append(sample)
                 rows.append(row)
-                timestamps.append(timestamp)
+                timestamps.append(np.datetime64(timestamp, "us") + self.delta)
         return timestamps, rows
 
 
